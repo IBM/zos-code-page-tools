@@ -3,11 +3,7 @@ A set of zos code pages tools, handy for conversion from codepages such as EBCDI
 
 To build:
 ```
-mkdir obj/
-
-cd obj/
-
-make -f ../Makefile
+make
 ```
 
-
+The executables are placed in objs/ 
