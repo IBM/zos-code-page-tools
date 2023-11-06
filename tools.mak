@@ -12,6 +12,7 @@ ME:=$(firstword $(MAKEFILE_LIST))
 USER:=$(shell id -nu)
 GITDIR:=$(shell dirname $(ME))/.
 COMMIT:=zoscptools-$(shell echo $$(cd $(GITDIR) && git log -n 1 --no-color) | sed -e "s/^commit \([^ ]*\) .*/\1/" )
+PREFIX?=/usr
 
 ifndef SRC_DIR
 SRC_DIR:=$(GITDIR)
@@ -43,7 +44,7 @@ else
 -D_XOPEN_SOURCE_EXTENDED  \
 -D_XPLATFORM_SOURCE=1  \
 -D__static_assert=static_assert  \
--D_POSIX_C_SOURCE=200809L  \
+-D_POSIX_C_SOURCE=2 \
 -fasm  \
 -fzos-le-char-mode=ascii  \
 -isystem/usr/include  \
@@ -54,8 +55,8 @@ endif
 LINK:=$(CLANG) -V -W ,CALL,REUS=RENT,MAP,XREF,LIST,LP64 -Wl,XPLINK
 
 install:
-	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	install $(BINS) $(DESTDIR)$(PREFIX)/bin
+	mkdir -p $(PREFIX)/bin
+	install $(BINS) $(PREFIX)/bin
 
 check:
 	@echo no check yet
