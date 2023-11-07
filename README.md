@@ -1,14 +1,6 @@
 # zos-code-page-tools
 A set of zos code pages tools, handy for conversion from codepages such as EBCDIC and ASCII
 
-To build:
-```
-make
-```
-
-The executables are placed in objs/ 
-
-
 Usage example:
 
 #### tagfile -q -r dir/ files ....
@@ -50,5 +42,14 @@ Usage example:
     Convert from ebcdic (ccsiaed 1047) to ascii (ccsid 819)
 
 note: aeconv conversion is done in-place, i.e. it is destructive (no temp file is created)
+
+
+
+To build:
+```
+make
+```
+
+The executables are placed in objs/ 
 
      
