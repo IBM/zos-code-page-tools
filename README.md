@@ -29,6 +29,8 @@ Usage example:
       -a                       output in ASCII
       -e                       output in EBCDIC
       -2                       output in file descriptor 2 (stderr)
+      
+cat2 would try to display file content in readable text, converting a mix of EBCDIC and ASCII lines.
      
 #### cat2 -o rawdata.txt f - g
       Convert f's contents, then standard input,
