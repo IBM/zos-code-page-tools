@@ -283,7 +283,7 @@ DESCRIPTION\n\
 \n\
 RETURN\n\
         0,  no error\n\
-        1,  not correct utf-8 detected\n\
+        1,  malformed utf-8 detected\n\
         255,  other errors\n\
 \n\
 utf8-ver version 1.0\n\
