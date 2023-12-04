@@ -51,26 +51,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#if __MVS__
-#include <_Nascii.h>
-static inline void *__convert_one_to_one(const void *table, void *dst,
-                                         size_t size, const void *src) {
-  register void *rst = dst;
-  __asm(" troo 2,%2,1 \n jo *-4 \n"
-        : "+NR:r3"(size), "+NR:r2"(dst), "+r"(src)
-        : "NR:r1"(table)
-        : "r0");
-  return rst;
-}
-static int __setfdccsid(int fd, int t_ccsid) {
-  attrib_t attr;
-  memset(&attr, 0, sizeof(attr));
-  attr.att_filetagchg = 1;
-  attr.att_filetag.ft_txtflag = (t_ccsid >> 16);
-  attr.att_filetag.ft_ccsid = (t_ccsid & 0x0ffff);
-  return __fchattr(fd, &attr, sizeof(attr));
-}
-#else
 static inline void *__convert_one_to_one(const void *tbl, void *dst,
                                          size_t size, const void *src) {
   int i;
@@ -82,6 +62,17 @@ static inline void *__convert_one_to_one(const void *tbl, void *dst,
   }
   return target;
 }
+#if __MVS__
+#include <_Nascii.h>
+static int __setfdccsid(int fd, int t_ccsid) {
+  attrib_t attr;
+  memset(&attr, 0, sizeof(attr));
+  attr.att_filetagchg = 1;
+  attr.att_filetag.ft_txtflag = (t_ccsid >> 16);
+  attr.att_filetag.ft_ccsid = (t_ccsid & 0x0ffff);
+  return __fchattr(fd, &attr, sizeof(attr));
+}
+#else
 static int __setfdccsid(int fd, int t_ccsid) { return 0; }
 #endif
 
@@ -453,34 +444,6 @@ int buf_has_data(struct slide_buf *buf) {
   return 0;
 }
 
-#if __MVS__
-static inline unsigned strlen_n(const unsigned char *str) {
-  static unsigned char _tab[256] = {
-      1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  };
-  unsigned long bytes = slide_width;
-  unsigned long code_out = 0;
-  const unsigned char *start = str;
-  __asm(" trte %1,%3,0\n"
-        " jo *-4\n"
-        : "+NR:r3"(bytes), "+NR:r2"(str), "+r"(bytes), "+r"(code_out)
-        : "NR:r1"(_tab)
-        :);
-  if (code_out == 2)
-    return str - start + 1;
-  return str - start;
-}
-#else
 int strlen_n(const unsigned char *str) {
   int res = 0;
   while (*str) {
@@ -491,7 +454,6 @@ int strlen_n(const unsigned char *str) {
   }
   return res;
 }
-#endif
 
 unsigned find_longest_in_buf(struct slide_buf *buf, unsigned *len) {
   int tab;
