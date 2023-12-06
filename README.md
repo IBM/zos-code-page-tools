@@ -5,6 +5,7 @@ Usage example:
 
 #### tagfile -q -r dir/ files ....
       set file tag of files based on detected file content
+      -d: do not tag anything, just dry run, exit 0 if tagging is not necessary
       -q, quiet operation
       -h, this information
       -r, recurse subdirectory
