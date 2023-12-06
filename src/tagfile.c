@@ -125,6 +125,7 @@ struct options {
   int qflag;
   int uflag;
   int bflag;
+  int dflag;
   int hflag;
   int rflag;
   int errcnt;
@@ -370,9 +371,15 @@ static int dofile(const char *name, struct options *opts) {
     attr.att_filetagchg = 1;
     attr.att_filetag.ft_ccsid = ccsid;
     attr.att_filetag.ft_txtflag = tag;
-    if (!opts->qflag)
+    if (!opts->qflag) {
       printf("file: %s changing file tag from t:%d ccsid:%d to t:%d ccsid:%d\n",
              name, st.st_tag.ft_txtflag, st.st_tag.ft_ccsid, tag, ccsid);
+    }
+    if (opts->dflag) {
+      opts->errcnt++; // if file tag needs change, then we should return
+                      // non-zero on dry run.
+      return 1;
+    }
     if (__chattr((char *)name, &attr, sizeof(attr)) != 0) {
       if (!opts->qflag)
         fprintf(stderr, "__chattr() error on %s: %s\n", name, strerror(errno));
@@ -380,9 +387,10 @@ static int dofile(const char *name, struct options *opts) {
       return 1;
     }
   } else {
-    if (!opts->qflag)
+    if (!opts->qflag) {
       printf("file: %s file tag unchanged t:%d ccsid:%d\n", name,
              st.st_tag.ft_txtflag, st.st_tag.ft_ccsid);
+    }
   }
   return 0;
 }
@@ -451,6 +459,8 @@ void syntax(void) {
          "\t%s [OPTION]... [FILE]...\n\n"
          "DESCRIPTION\n"
          "\tOptions:\n\n"
+         "\t-d: do not tag anything, just dry run, exit 0 if tagging is not "
+         "necessary\n"
          "\t-b: do not tag binary files\n"
          "\t-h: display syntax information\n"
          "\t-q: quiet operation\n"
@@ -468,13 +478,16 @@ int main(int argc, char **argv) {
   int rc = 0;
   opterr = 0;
   memset(&opts, 0, sizeof(opts));
-  while (c = getopt(argc, argv, "bquhrv"), c != -1)
+  while (c = getopt(argc, argv, "bdquhrv"), c != -1)
     switch (c) {
     case 'q':
       opts.qflag = 1;
       break;
     case 'b':
       opts.bflag = 1;
+      break;
+    case 'd':
+      opts.dflag = 1;
       break;
     case 'h':
       opts.hflag = 1;
