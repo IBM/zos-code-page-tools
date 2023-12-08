@@ -329,13 +329,13 @@ static int dofile(const char *name, struct options *opts) {
   if (state.ebcdic_cnt > 0 && state.ebcdic_cnt == state.total_ebcdic) {
     tag = 1;
     ccsid = 1047;
-    if (st.st_tag.ft_ccsid != ccsid) {
+    if (st.st_tag.ft_ccsid != ccsid || st.st_tag.ft_txtflag != tag) {
       makechange = 1;
     }
   } else if (state.ascii_cnt > 0 && state.ascii_cnt == state.total_ascii) {
     tag = 1;
     ccsid = 819;
-    if (st.st_tag.ft_ccsid != ccsid) {
+    if (st.st_tag.ft_ccsid != ccsid || st.st_tag.ft_txtflag != tag) {
       makechange = 1;
     }
   } else if (state.ascii_cnt > 0 && state.utf8_format_error == 0 &&
@@ -345,7 +345,7 @@ static int dofile(const char *name, struct options *opts) {
       ccsid = 1208;
     else
       ccsid = 819;
-    if (st.st_tag.ft_ccsid != ccsid) {
+    if (st.st_tag.ft_ccsid != ccsid || st.st_tag.ft_txtflag != tag) {
       makechange = 1;
     }
   } else {
@@ -359,7 +359,7 @@ static int dofile(const char *name, struct options *opts) {
     } else {
       ccsid = 65535;
     }
-    if (st.st_tag.ft_ccsid != ccsid) {
+    if (st.st_tag.ft_ccsid != ccsid || st.st_tag.ft_txtflag != tag) {
       makechange = 1;
     }
     if (opts->bflag && ccsid == 65535) {
