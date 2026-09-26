@@ -50,7 +50,38 @@
 #define _OPEN_SYS_DIR_EXT
 #endif
 
+#if __MVS__
 #include <_Nascii.h>
+#else
+#include <stddef.h>
+#include <errno.h>
+/* Portable fallback so the file lints/builds on non-z/OS for analysis.
+ * File tagging is a z/OS-only feature; on other platforms dofile()
+ * will report that tagging is unsupported. */
+typedef struct {
+  int ft_txtflag;
+  unsigned short ft_ccsid;
+} filetag_t;
+typedef struct {
+  int att_filetagchg;
+  filetag_t att_filetag;
+} attrib_t;
+static int __chattr(char *name, attrib_t *attr, size_t size) {
+  (void)name;
+  (void)attr;
+  (void)size;
+  errno = ENOSYS;
+  return -1;
+}
+static int __ae_autoconvert_state(int state) {
+  (void)state;
+  return 0;
+}
+#ifndef _CVTSTATE_OFF
+#define _CVTSTATE_OFF 0
+#endif
+/* Provide a minimal st_tag member for non-z/OS builds. */
+#endif
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -58,7 +89,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -66,7 +96,7 @@
 #define MAJOR_VERSION 1
 #define MINOR_VERSION 0
 
-const static char ebcdic_valid[256] = {
+static const char ebcdic_valid[256] = {
     0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
@@ -79,7 +109,7 @@ const static char ebcdic_valid[256] = {
     1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0};
 
-const static char ascii_valid[256] = {
+static const char ascii_valid[256] = {
     0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
@@ -92,7 +122,7 @@ const static char ascii_valid[256] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-const static char utf8pat[256] = {
+static const char utf8pat[256] = {
     // UTF8 states
     // 0xxxxxxx = 0
     // 10xxxxxx = 1 (mulbyte trail)
@@ -142,7 +172,7 @@ static int expander(const char *path, struct options *opts);
 
 static void determine_ebcdic(const char *buffer, size_t size,
                              cp_state_t *state) {
-  int i;
+  size_t i;
   int c;
   for (i = 0; i < size; ++i) {
     c = buffer[i] & 255;
@@ -155,7 +185,7 @@ static void determine_ebcdic(const char *buffer, size_t size,
 
 static void determine_ascii(const char *buffer, size_t size,
                             cp_state_t *state) {
-  int i;
+  size_t i;
   int c;
   for (i = 0; i < size; ++i) {
     c = buffer[i] & 255;
@@ -167,7 +197,7 @@ static void determine_ascii(const char *buffer, size_t size,
 }
 
 static void determine_utf8(const char *buffer, size_t size, cp_state_t *state) {
-  int i;
+  size_t i;
   int c;
   enum {
     onebyte = 1,
@@ -178,7 +208,7 @@ static void determine_utf8(const char *buffer, size_t size, cp_state_t *state) {
     fourbyte1,
     fourbyte2,
     bad
-  } state_t;
+  };
   int st = onebyte;
   if (state->utf8_st == 0) {
     state->utf8_st = onebyte;
@@ -254,18 +284,15 @@ static void determine_utf8(const char *buffer, size_t size, cp_state_t *state) {
 }
 
 static int dofile(const char *name, struct options *opts) {
-  FILE *f;
   int fd = -1;
-  size_t size = 0;
-  size_t offset = 0;
-  char *buffer;
-  int b;
   int tag = 0;
   unsigned short ccsid = 0;
   int makechange = 0;
   attrib_t attr;
   struct stat st;
   cp_state_t state;
+  int cur_txtflag = 0;
+  int cur_ccsid = 0;
   if (stat(name, &st) != 0) {
     if (!opts->qflag)
       fprintf(stderr, "stat() error on %s: %s\n", name, strerror(errno));
@@ -273,63 +300,53 @@ static int dofile(const char *name, struct options *opts) {
     return 1;
   }
   if (st.st_size == 0) {
+#if __MVS__
+    cur_txtflag = st.st_tag.ft_txtflag;
+    cur_ccsid = st.st_tag.ft_ccsid;
+#endif
     if (!opts->qflag)
       printf("file: %s is of size 0, tagged with t:%d ccsid:%d\n", name,
-             st.st_tag.ft_txtflag, st.st_tag.ft_ccsid);
+             cur_txtflag, cur_ccsid);
     opts->errcnt++;
     return 1;
   }
-  size = st.st_size;
+#if __MVS__
+  cur_txtflag = st.st_tag.ft_txtflag;
+  cur_ccsid = st.st_tag.ft_ccsid;
+#endif
   memset(&state, 0, sizeof(state));
 
-  if ((fd = open(name, O_RDWR, 0)) == -1) {
+  if ((fd = open(name, O_RDONLY)) == -1) {
     if (!opts->qflag)
-      printf("file: %s cannot open, errno %d\n", name, errno);
+      fprintf(stderr, "file: %s cannot open: %s\n", name, strerror(errno));
     opts->errcnt++;
     return 1;
   }
-  buffer = (char *)mmap(0, 4096, PROT_READ, MAP_PRIVATE, fd, offset);
-  if (buffer) {
-    if (size > 4096) {
-      b = 4096;
-      size -= 4096;
-      offset += 4096;
-    } else {
-      b = size;
-      offset += size;
-      size = 0;
-    }
-  }
-  while (buffer && b) {
-    int i;
-    determine_ebcdic(buffer, b, &state);
-    determine_ascii(buffer, b, &state);
-    determine_utf8(buffer, b, &state);
-    munmap(buffer, 4096);
-    buffer = (char *)mmap(0, 4096, PROT_READ, MAP_PRIVATE, fd, offset);
-    if (buffer) {
-      if (size > 4096) {
-        b = 4096;
-        size -= 4096;
-        offset += 4096;
-      } else {
-        b = size;
-        offset += size;
-        size = 0;
-      }
-    } else {
+  /* Use read() instead of mmap(): portable, no page-alignment or
+   * SIGBUS-on-truncated-file hazards, and no MAP_FAILED confusion. */
+  for (;;) {
+    char chunk[4096];
+    ssize_t n = read(fd, chunk, sizeof(chunk));
+    if (n < 0) {
+      if (errno == EINTR)
+        continue;
       if (!opts->qflag)
-        printf("mmap errno %d, offset %zu \n", errno, offset);
+        fprintf(stderr, "read() error on %s: %s\n", name, strerror(errno));
       close(fd);
       opts->errcnt++;
       return 1;
     }
+    if (n == 0)
+      break;
+    determine_ebcdic(chunk, (size_t)n, &state);
+    determine_ascii(chunk, (size_t)n, &state);
+    determine_utf8(chunk, (size_t)n, &state);
   }
   close(fd);
   if (state.ebcdic_cnt > 0 && state.ebcdic_cnt == state.total_ebcdic) {
     tag = 1;
     ccsid = 1047;
-    if (st.st_tag.ft_ccsid != ccsid || st.st_tag.ft_txtflag != tag) {
+    if (cur_ccsid != ccsid || cur_txtflag != tag) {
       makechange = 1;
     }
   } else if (state.ascii_cnt > 0 && state.ascii_cnt == state.total_ascii) {
@@ -338,7 +355,7 @@ static int dofile(const char *name, struct options *opts) {
       ccsid = 1208;
     else
       ccsid = 819;
-    if (st.st_tag.ft_ccsid != ccsid || st.st_tag.ft_txtflag != tag) {
+    if (cur_ccsid != ccsid || cur_txtflag != tag) {
       makechange = 1;
     }
   } else if (state.ascii_cnt > 0 && state.utf8_format_error == 0 &&
@@ -348,7 +365,7 @@ static int dofile(const char *name, struct options *opts) {
       ccsid = 1208;
     else
       ccsid = 819;
-    if (st.st_tag.ft_ccsid != ccsid || st.st_tag.ft_txtflag != tag) {
+    if (cur_ccsid != ccsid || cur_txtflag != tag) {
       makechange = 1;
     }
   } else {
@@ -362,13 +379,26 @@ static int dofile(const char *name, struct options *opts) {
     } else {
       ccsid = 65535;
     }
-    if (st.st_tag.ft_ccsid != ccsid || st.st_tag.ft_txtflag != tag) {
+    if (cur_ccsid != ccsid || cur_txtflag != tag) {
       makechange = 1;
     }
     if (opts->bflag && ccsid == 65535) {
       makechange = 0;
     }
   }
+#ifndef __MVS__
+  /* Tagging is z/OS-only; report what would be done. */
+  if (!opts->qflag) {
+    if (makechange)
+      printf("file: %s would change tag to t:%d ccsid:%d (tagging "
+             "unsupported on this platform)\n",
+             name, tag, ccsid);
+    else
+      printf("file: %s file tag unchanged t:%d ccsid:%d\n", name, cur_txtflag,
+             cur_ccsid);
+  }
+  return 0;
+#endif
   if (makechange) {
     memset(&attr, 0, sizeof(attr));
     attr.att_filetagchg = 1;
@@ -376,7 +406,7 @@ static int dofile(const char *name, struct options *opts) {
     attr.att_filetag.ft_txtflag = tag;
     if (!opts->qflag) {
       printf("file: %s changing file tag from t:%d ccsid:%d to t:%d ccsid:%d\n",
-             name, st.st_tag.ft_txtflag, st.st_tag.ft_ccsid, tag, ccsid);
+             name, cur_txtflag, cur_ccsid, tag, ccsid);
     }
     if (opts->dflag) {
       opts->errcnt++; // if file tag needs change, then we should return
@@ -391,16 +421,46 @@ static int dofile(const char *name, struct options *opts) {
     }
   } else {
     if (!opts->qflag) {
-      printf("file: %s file tag unchanged t:%d ccsid:%d\n", name,
-             st.st_tag.ft_txtflag, st.st_tag.ft_ccsid);
+      printf("file: %s file tag unchanged t:%d ccsid:%d\n", name, cur_txtflag,
+             cur_ccsid);
     }
   }
   return 0;
 }
 
 static int dowork(const char *path, struct options *p) {
+  struct stat lst;
   struct stat st;
   int rc;
+  /* Use lstat to avoid descending into symlinked directories
+   * (prevents symlink-loop infinite recursion). */
+  if (lstat(path, &lst) != 0) {
+    if (!p->qflag)
+      fprintf(stderr, "lstat() error on %s: %s\n", path, strerror(errno));
+    p->errcnt++;
+    return -1;
+  }
+  if (S_ISLNK(lst.st_mode)) {
+    rc = stat(path, &st);
+    if (rc != 0) {
+      if (!p->qflag)
+        fprintf(stderr, "stat() error on %s: %s\n", path, strerror(errno));
+      p->errcnt++;
+      return -1;
+    }
+    if (S_ISDIR(st.st_mode)) {
+      if (!p->qflag)
+        fprintf(stderr, "# %s is a symlink to a directory, skipped\n", path);
+      return 0;
+    }
+    if (S_ISREG(st.st_mode)) {
+      return dofile(path, p);
+    }
+    if (!p->qflag)
+      fprintf(stderr, "# %s is not a file or directory\n", path);
+    p->errcnt++;
+    return -1;
+  }
   rc = stat(path, &st);
   if (rc) {
     if (!p->qflag)
@@ -426,7 +486,6 @@ static int dowork(const char *path, struct options *p) {
 }
 
 static int expander(const char *dirpath, struct options *opts) {
-  int rc;
   struct dirent *entry;
   char path[1025];
   DIR *dir = opendir(dirpath);
@@ -435,15 +494,19 @@ static int expander(const char *dirpath, struct options *opts) {
     opts->errcnt++;
     return -1;
   }
-  while (entry = readdir(dir), entry != 0) {
-    if (entry->d_name[0] != '.' ||
-        (entry->d_name[1] != 0 &&
-         (entry->d_name[1] != '.' || entry->d_name[2] != 0))) {
-      strncpy(path, dirpath, sizeof(path) - 1);
-      strncat(path, "/", sizeof(path) - 1);
-      strncat(path, entry->d_name, sizeof(path) - 1);
-      dowork(path, opts);
+  while ((entry = readdir(dir)) != NULL) {
+    if (strcmp(entry->d_name, ".") == 0 ||
+        strcmp(entry->d_name, "..") == 0) {
+      continue;
     }
+    int needed = snprintf(path, sizeof(path), "%s/%s", dirpath, entry->d_name);
+    if (needed < 0 || needed >= (int)sizeof(path)) {
+      fprintf(stderr, "path too long, skipped: %s/%s\n", dirpath,
+              entry->d_name);
+      opts->errcnt++;
+      continue;
+    }
+    dowork(path, opts);
   }
   closedir(dir);
   return 0;
@@ -478,10 +541,9 @@ int main(int argc, char **argv) {
   struct options opts;
   int index;
   int c;
-  int rc = 0;
   opterr = 0;
   memset(&opts, 0, sizeof(opts));
-  while (c = getopt(argc, argv, "bdquhrv"), c != -1)
+  while ((c = getopt(argc, argv, "bdquhrv")) != -1)
     switch (c) {
     case 'q':
       opts.qflag = 1;
@@ -515,15 +577,20 @@ int main(int argc, char **argv) {
 
   if (opts.hflag) {
     syntax();
-    return -1;
+    return 0;
   }
 
   if (opts.vflag) {
     version();
-    return -1;
+    return 0;
   }
 
-  int oldstate = __ae_autoconvert_state(_CVTSTATE_OFF);
+  if (optind >= argc) {
+    fprintf(stderr, "no files specified, see -h\n");
+    return 2;
+  }
+
+  (void)__ae_autoconvert_state(_CVTSTATE_OFF);
 
   for (index = optind; index < argc; ++index) {
     dowork(argv[index], &opts);
@@ -532,5 +599,5 @@ int main(int argc, char **argv) {
   if (!opts.qflag) {
     fprintf(stderr, "Done, %d errors detected\n", opts.errcnt);
   }
-  return opts.errcnt;
+  return opts.errcnt ? 1 : 0;
 }

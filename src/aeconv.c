@@ -46,13 +46,17 @@
 #include <_Nascii.h>
 #endif
 void help(int argc, char** argv) {
+  (void)argc;
   fprintf(stderr,
-          "\n%s  [option] files... \n\n"
+          "\n%s [option] files... \n\n"
           "     options\n"
-          "       -a2e\n"
-          "       -e2a\n",
+          "       -a2e    convert from ASCII (CCSID 819) to EBCDIC (CCSID 1047)\n"
+          "       -e2a    convert from EBCDIC (CCSID 1047) to ASCII (CCSID 819)\n"
+          "\n"
+          "     NOTE: conversion is done in-place and is destructive.\n"
+          "           Back up files before converting.\n",
           argv[0]);
-  exit(-1);
+  exit(2);
 }
 static const unsigned char a2e[256] = {
     /* 00 */ 0x00, 0x01, 0x02, 0x03, 0x37, 0x2d, 0x2e, 0x2f,
@@ -125,13 +129,25 @@ static const unsigned char e2a[256] = {
 
 };
 void errormsg(const char* name, const char* desc, int err) {
-  char msg[1024];
-  int rc = strerror_r(err, msg, 1024);
-  if (rc == 0) {
-    fprintf(stderr, "%s %s: %s\n", name, desc, msg);
-  } else {
-    fprintf(stderr, "%s %s: errno:%d\n", name, desc, err);
+  fprintf(stderr, "%s %s: %s\n", name, desc, strerror(err));
+}
+
+static ssize_t full_write(int fd, const unsigned char* buf, size_t count) {
+  size_t done = 0;
+  while (done < count) {
+    ssize_t rc = write(fd, buf + done, count - done);
+    if (rc < 0) {
+      if (errno == EINTR)
+        continue;
+      return -1;
+    }
+    if (rc == 0) {
+      errno = EIO;
+      return -1;
+    }
+    done += (size_t)rc;
   }
+  return (ssize_t)done;
 }
 
 int main(int argc, char** argv) {
@@ -140,8 +156,6 @@ int main(int argc, char** argv) {
 #endif
   const unsigned char* table;
   struct stat st;
-  int err;
-  char msg[1024];
   if (argc < 3) {
     help(argc, argv);
   }
@@ -159,9 +173,6 @@ int main(int argc, char** argv) {
     if (rc == -1) {
       errormsg(*files, "stat failed", errno);
       ++error;
-    } else if (0 == (S_IWUSR & st.st_mode)) {
-      fprintf(stderr, "%s is not writable, permssiion denied\n", *files);
-      ++error;
     } else if (!S_ISREG(st.st_mode)) {
       fprintf(stderr, "%s is not a regular file, invalid\n", *files);
       ++error;
@@ -175,50 +186,63 @@ int main(int argc, char** argv) {
         errormsg(*files, "open failed", errno);
         ++error;
       } else {
-        off_t off;
-        do {
+        /* Re-stat through the open fd to reduce TOCTOU vs. the
+         * stat() above (symlink/file swap between stat and open). */
+        struct stat fst;
+        if (fstat(fd, &fst) == -1) {
+          errormsg(*files, "fstat failed", errno);
+          ++error;
+          close(fd);
+        } else if (!S_ISREG(fst.st_mode)) {
+          fprintf(stderr, "%s is not a regular file, invalid\n", *files);
+          ++error;
+          close(fd);
+        } else {
+          off_t off;
+          int done = 0;
           off = lseek(fd, 0, SEEK_SET);
           if (off == -1) {
             errormsg(*files, "seek failed", errno);
             ++error;
-            break;
+          } else {
+            bytes = read(fd, buffer, sizeof(buffer));
+            while (bytes > 0) {
+              size_t i;
+              for (i = 0; i < (size_t)bytes; ++i) {
+                buffer[i] = table[buffer[i]];
+              }
+              if (lseek(fd, off, SEEK_SET) == -1) {
+                errormsg(*files, "seek failed", errno);
+                ++error;
+                break;
+              }
+              if (full_write(fd, buffer, (size_t)bytes) == -1) {
+                errormsg(*files, "write failed", errno);
+                ++error;
+                break;
+              }
+              off = lseek(fd, 0, SEEK_CUR);
+              if (off == -1) {
+                errormsg(*files, "seek failed", errno);
+                ++error;
+                break;
+              }
+              bytes = read(fd, buffer, sizeof(buffer));
+              if (bytes == 0)
+                done = 1;
+            }
+            if (bytes < 0) {
+              errormsg(*files, "read failed", errno);
+              ++error;
+            } else if (!done && bytes != 0) {
+              /* bytes == 0 means clean EOF; nothing to do */
+            }
           }
-          bytes = read(fd, buffer, 4096);
-          while (bytes > 0) {
-            size_t i;
-            for (i = 0; i < bytes; ++i) {
-              buffer[i] = table[255 & buffer[i]];
-            }
-            off = lseek(fd, off, SEEK_SET);
-            if (off == -1) {
-              errormsg(*files, "seek failed", errno);
-              ++error;
-              break;
-            }
-            rc = write(fd, buffer, bytes);
-            if (rc == -1) {
-              errormsg(*files, "write failed", errno);
-              ++error;
-              break;
-            }
-            off = lseek(fd, 0, SEEK_CUR);
-            if (off == -1) {
-              errormsg(*files, "seek failed", errno);
-              ++error;
-              break;
-            }
-            bytes = read(fd, buffer, 4096);
-          }
-        } while (0);
-        if (bytes < 0) {
-          errormsg(*files, "read failed", errno);
-          ++error;
-          break;
+          close(fd);
         }
-        close(fd);
       }
     }
     ++files;
   }
-  return error;
+  return error ? 1 : 0;
 }

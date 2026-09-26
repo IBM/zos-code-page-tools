@@ -62,8 +62,26 @@ static int byte0_next_state[256] = {
     2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  3,  3,  3,  3,  3,  3,  3,
     3,  -1, -1, -1, -1, -1, -1, -1, -1};
 
+static ssize_t full_write(int fd, const void *buf, size_t count) {
+  const unsigned char *p = (const unsigned char *)buf;
+  size_t done = 0;
+  while (done < count) {
+    ssize_t rc = write(fd, p + done, count - done);
+    if (rc < 0) {
+      if (errno == EINTR)
+        continue;
+      return -1;
+    }
+    if (rc == 0) {
+      errno = EIO;
+      return -1;
+    }
+    done += (size_t)rc;
+  }
+  return (ssize_t)done;
+}
+
 int work(int fd, int outfd, const char *filename, int verbose, int u) {
-  unsigned char c;
   unsigned char onebyte;
   char output[80];
   int bytes;
@@ -72,25 +90,26 @@ int work(int fd, int outfd, const char *filename, int verbose, int u) {
   unsigned char d[4];
   size_t offset = 0;
   int linenum = 1;
-  c = read(fd, &onebyte, 1);
-  while (c == 1) {
+  ssize_t n = read(fd, &onebyte, 1);
+  while (n == 1) {
     switch (state) {
     case 0:
       state = byte0_next_state[onebyte];
       if (-1 == state) {
         if (verbose)
           fprintf(stderr,
-                  "Error deleted in: \"%s\", "
+                  "Error detected in: \"%s\", "
                   "Invalid unicode sequence at file offset %lu around line "
                   "%d, byte 0x%02X malformed, not one of 0xxxxxxx, "
                   "110xxxxx, 1110xxxx, 11110xxx\n",
-                  filename, offset, linenum, onebyte);
+                  filename, (unsigned long)offset, linenum, onebyte);
         return -1;
       }
       if (state == 0) {
         if (onebyte == 0x0a)
           ++linenum;
-        write(outfd, &onebyte, 1);
+        if (full_write(outfd, &onebyte, 1) < 0)
+          return -1;
         break;
       } else {
         d[0] = onebyte;
@@ -99,30 +118,34 @@ int work(int fd, int outfd, const char *filename, int verbose, int u) {
     case 1:
       if ((onebyte & 0xc0) == 0x80) {
         d[1] = onebyte;
-        value = (0x1c & d[0] << 6) | (((0x03 & d[0]) << 6) | (0x3f & d[1]));
+        value = (((unsigned int)(d[0] & 0x1f)) << 6) |
+                ((unsigned int)(d[1] & 0x3f));
         if (value < 0x80 || value > 0x7ff) {
           if (verbose)
             fprintf(
                 stderr,
-                "Error deleted in: \"%s\", "
+                "Error detected in: \"%s\", "
                 "Invalid unicode sequence at file offset %lu around line "
                 "%d, 2-byte sequence 0x%02X%02X value U+%04X invalid, range "
                 "out of U+0080 and U+07FF\n",
-                filename, offset, linenum, d[0], d[1], value);
+                filename, (unsigned long)offset, linenum, d[0], d[1], value);
           return -1;
         }
         bytes = u ? snprintf(output, 80, "U+%04X", value)
                   : snprintf(output, 80, "\\u%04X", value);
-        write(outfd, output, bytes);
+        if (bytes < 0 || bytes >= 80)
+          return -1;
+        if (full_write(outfd, output, (size_t)bytes) < 0)
+          return -1;
         state = 0;
       } else {
         if (verbose)
           fprintf(stderr,
-                  "Error deleted in: \"%s\", "
+                  "Error detected in: \"%s\", "
                   "Invalid unicode sequence at file offset %lu around line "
                   "%d, 2-byte sequence 0x%02X%02X 2nd byte malformed, not "
                   "110xxxxx-10xxxxxx\n",
-                  filename, offset, linenum, d[0], onebyte);
+                  filename, (unsigned long)offset, linenum, d[0], onebyte);
         return -1;
       }
       break;
@@ -134,11 +157,11 @@ int work(int fd, int outfd, const char *filename, int verbose, int u) {
       } else {
         if (verbose)
           fprintf(stderr,
-                  "Error deleted in: \"%s\", "
+                  "Error detected in: \"%s\", "
                   "Invalid unicode sequence at file offset %lu around line "
                   "%d, 3-byte sequence 0x%02X%02Xxx 2nd byte malformed, not "
                   "1110xxxx-10xxxxxx-xxxxxxxx\n",
-                  filename, offset, linenum, d[0], onebyte);
+                  filename, (unsigned long)offset, linenum, d[0], onebyte);
         return -1;
       }
       break;
@@ -150,11 +173,11 @@ int work(int fd, int outfd, const char *filename, int verbose, int u) {
       } else {
         if (verbose)
           fprintf(stderr,
-                  "Error deleted in: \"%s\", "
+                  "Error detected in: \"%s\", "
                   "Invalid unicode sequence at file offset %lu around line "
                   "%d, 4-byte sequence 0x%02X%02Xxxxx 2nd byte malformed, not "
                   "11110xxx-10xxxxxx-xxxxxxxx-xxxxxxxx\n",
-                  filename, offset, linenum, d[0], onebyte);
+                  filename, (unsigned long)offset, linenum, d[0], onebyte);
         return -1;
       }
       break;
@@ -167,11 +190,11 @@ int work(int fd, int outfd, const char *filename, int verbose, int u) {
         if (verbose)
           fprintf(
               stderr,
-              "Error deleted in: \"%s\", "
+              "Error detected in: \"%s\", "
               "Invalid unicode sequence at file offset %lu around line "
               "%d, 4-byte sequence 0x%02X%02X%02Xxx 3rd byte malformed, not "
               "11110xxx-10xxxxxx-10xxxxxxx-xxxxxxxx\n",
-              filename, offset, linenum, d[0], d[1], onebyte);
+              filename, (unsigned long)offset, linenum, d[0], d[1], onebyte);
         return -1;
       }
       break;
@@ -181,29 +204,36 @@ int work(int fd, int outfd, const char *filename, int verbose, int u) {
         d[2] = onebyte;
         value =
             ((0x000f & d[0]) << 12) | ((0x003f & d[1]) << 6) | (0x3f & d[2]);
-        if (value < 0x0800 || value > 0x0ffff) {
+        if (value < 0x0800 || value > 0x0ffff ||
+            (value >= 0xd800 && value <= 0xdfff)) {
           if (verbose)
             fprintf(stderr,
-                    "Error deleted in: \"%s\", "
+                    "Error detected in: \"%s\", "
                     "Invalid unicode sequence at file offset %lu around line "
                     "%d, 3-byte sequence 0x%02X%02X%02X value U+%04X "
                     "invalid, range "
-                    "out of U+0800 and U+FFFF\n",
-                    filename, offset, linenum, d[0], d[1], d[2], value);
+                    "out of U+0800 and U+FFFF (surrogates U+D800-U+DFFF "
+                    "rejected)\n",
+                    filename, (unsigned long)offset, linenum, d[0], d[1],
+                    d[2], value);
           return -1;
         }
         bytes = u ? snprintf(output, 80, "U+%04X", value)
                   : snprintf(output, 80, "\\u%04X", value);
-        write(outfd, output, bytes);
+        if (bytes < 0 || bytes >= 80)
+          return -1;
+        if (full_write(outfd, output, (size_t)bytes) < 0)
+          return -1;
         state = 0;
       } else {
         if (verbose)
           fprintf(stderr,
-                  "Error deleted in: \"%s\", "
+                  "Error detected in: \"%s\", "
                   "Invalid unicode sequence at file offset %lu around line "
                   "%d, 3-byte sequence 0x%02X%02X%02X 3rd byte malformed, not "
                   "11110xxx-10xxxxxx-10xxxxxxx\n",
-                  filename, offset, linenum, d[0], d[1], onebyte);
+                  filename, (unsigned long)offset, linenum, d[0], d[1],
+                  onebyte);
         return -1;
       }
       break;
@@ -215,68 +245,85 @@ int work(int fd, int outfd, const char *filename, int verbose, int u) {
         if (value < 0x010000 || value > 0x010ffff) {
           if (verbose)
             fprintf(stderr,
-                    "Error deleted in: \"%s\", "
+                    "Error detected in: \"%s\", "
                     "Invalid unicode sequence at file offset %lu around line "
                     "%d, 4-byte sequence 0x%02X%02X%02X%02X value U+%05X "
                     "invalid, range "
                     "out of U+10000 and U+10FFFF\n",
-                    filename, offset, linenum, d[0], d[1], d[2], d[3], value);
+                    filename, (unsigned long)offset, linenum, d[0], d[1],
+                    d[2], d[3], value);
           return -1;
         }
         bytes = u ? snprintf(output, 80, "U+%04X", value)
                   : snprintf(output, 80, "\\U%08X", value);
-        write(outfd, output, bytes);
+        if (bytes < 0 || bytes >= 80)
+          return -1;
+        if (full_write(outfd, output, (size_t)bytes) < 0)
+          return -1;
         state = 0;
       } else {
         if (verbose)
           fprintf(stderr,
-                  "Error deleted in: \"%s\", "
+                  "Error detected in: \"%s\", "
                   "Invalid unicode sequence at file offset %lu around line "
                   "%d, 4-byte sequence 0x%02X%02X%02X%02Xx 4th byte "
                   "malformed, not "
                   "11110xxx-10xxxxxx-10xxxxxxx-10xxxxxx\n",
-                  filename, offset, linenum, d[0], d[1], d[2], onebyte);
+                  filename, (unsigned long)offset, linenum, d[0], d[1], d[2],
+                  onebyte);
         return -1;
       }
       break;
     default:
       if (verbose)
         fprintf(stderr,
-                "Error deleted in: \"%s\", "
+                "Error detected in: \"%s\", "
                 "Invalid unicode sequence at file offset %lu around line "
                 "%d, parser in unknown state %d, byte read 0x%02X\n",
-                filename, offset, linenum, state, onebyte);
+                filename, (unsigned long)offset, linenum, state, onebyte);
       return -1;
     }
     ++offset;
-    c = read(fd, &onebyte, 1);
+    n = read(fd, &onebyte, 1);
+  }
+  if (n < 0) {
+    int err = errno;
+    if (verbose) {
+      errno = err;
+      fprintf(stderr, "Error detected in: \"%s\", read failed: %s\n",
+              filename, strerror(err));
+    }
+    return -1;
   }
   if (state != 0) {
     if (verbose)
       fprintf(stderr,
-              "Error deleted in: \"%s\", "
-              "Excepted End of File detected at file offset %lu around line "
+              "Error detected in: \"%s\", "
+              "Unexpected end of file at file offset %lu around line "
               "%d, parser in state %d, byte read 0x%02X\n",
-              filename, offset, linenum, state, onebyte);
+              filename, (unsigned long)offset, linenum, state, onebyte);
     return -1;
   }
   return 0;
 }
 int help(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
   fprintf(stderr, "\n\
 NAME\n\
-       utf8-ver - check and optionally convert multibyte code points to U'....' or u'....' notation\n\
+       utf8-verify - check and optionally convert multibyte code points to U'....' or u'....' notation\n\
 \n\
 SYNOPSIS\n\
-       utf8-ver [OPTION]... [FILE]\n\
+       utf8-verify -i [input file] -o [output file] [-u] [-v]\n\
 \n\
 DESCRIPTION\n\
-       Verify FILE to standard output.\n\
+       Verify FILE, writing converted output.\n\
 \n\
        With no FILE, or when FILE is -, read standard input.\n\
+       With no -o, or when output FILE is -, write standard output.\n\
 \n\
        -i,  input file name to read, '-' read standard input \n\
-       -o,  output file name to write to with converted multiple characters to ascii C\n\
+       -o,  output file name to write to with converted multibyte characters to ascii C\n\
             \\uxxxx (fixed-length, 4 hex digits) and \\Uxxxxxxxx (fixed-length, 8 hex digits)\n\
        -u,  convert to U+(xxxx | xxxxx | xxxxxx) form instead of the C notation\n\
        -v,  verbose\n\
@@ -284,23 +331,23 @@ DESCRIPTION\n\
 RETURN\n\
         0,  no error\n\
         1,  malformed utf-8 detected\n\
-        255,  other errors\n\
+        2,  other errors (bad usage, I/O failure)\n\
 \n\
-utf8-ver version 1.0\n\
+utf8-verify version 1.0\n\
 \n");
-  return -1;
+  return 0;
 }
 int main(int argc, char **argv) {
   opterr = 0;
   int c;
   int verbose = 0;
-  char *output_file = "/dev/null";
+  char *output_file = "-";
   int outfd = 1;
   char *input_file = "-";
   int infd = 0;
   int error = 0;
   int u = 0;
-  while (c = getopt(argc, argv, "i:o:huv"), c != -1)
+  while ((c = getopt(argc, argv, "i:o:huv")) != -1)
     switch (c) {
     case 'i':
       input_file = optarg;
@@ -312,20 +359,21 @@ int main(int argc, char **argv) {
       return help(argc, argv);
     case 'u':
       u = 1;
+      break;
     case 'v':
       verbose = 1;
       break;
     default:
       fprintf(stderr, "unexpected option %c unknown. see -h\n", optopt);
-      return -1;
+      return 2;
     }
 
   for (int i = optind; i < argc; ++i) {
     fprintf(stderr, "unexpected argument %s unknown. see -h\n", argv[i]);
-    error = -1;
+    error = 1;
   }
   if (error)
-    return error;
+    return 2;
 
   if (0 != strcmp("-", input_file)) {
     int fd = open(input_file, O_RDONLY);
@@ -336,20 +384,23 @@ int main(int argc, char **argv) {
       fprintf(stderr, "Unable to open %s for read\n", input_file);
       errno = err;
       perror("open for read");
-      return -1;
+      return 2;
     }
   }
   if (0 != strcmp("-", output_file)) {
-    int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC);
+    int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd != -1)
       outfd = fd;
     else {
       int err = errno;
-      fprintf(stderr, "Unable to open %s for write\n", input_file);
+      fprintf(stderr, "Unable to open %s for write\n", output_file);
       errno = err;
       perror("open for write");
-      return -1;
+      return 2;
     }
   }
-  return work(infd, outfd, input_file, verbose, u);
+  int rc = work(infd, outfd, input_file, verbose, u);
+  if (rc != 0)
+    return 1;
+  return 0;
 }

@@ -53,7 +53,7 @@
 #include <unistd.h>
 static inline void *__convert_one_to_one(const void *tbl, void *dst,
                                          size_t size, const void *src) {
-  int i;
+  size_t i;
   unsigned char *target = (unsigned char *)dst;
   const unsigned char *source = (const unsigned char *)src;
   const unsigned char *table = (const unsigned char *)tbl;
@@ -73,11 +73,42 @@ static int __setfdccsid(int fd, int t_ccsid) {
   return __fchattr(fd, &attr, sizeof(attr));
 }
 #else
-static int __setfdccsid(int fd, int t_ccsid) { return 0; }
+static int __setfdccsid(int fd, int t_ccsid) __attribute__((unused));
+static int __setfdccsid(int fd, int t_ccsid) {
+  (void)fd;
+  (void)t_ccsid;
+  return 0;
+}
 #endif
 
-void unblock(int fd) { fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK); }
-void block(int fd) { fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK); }
+static int full_write(int fd, const unsigned char *buf, size_t count) {
+  size_t done = 0;
+  while (done < count) {
+    ssize_t rc = write(fd, buf + done, count - done);
+    if (rc < 0) {
+      if (errno == EINTR)
+        continue;
+      return -1;
+    }
+    if (rc == 0) {
+      errno = EIO;
+      return -1;
+    }
+    done += (size_t)rc;
+  }
+  return 0;
+}
+
+void unblock(int fd) {
+  int flags = fcntl(fd, F_GETFL);
+  if (flags != -1)
+    (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+void block(int fd) {
+  int flags = fcntl(fd, F_GETFL);
+  if (flags != -1)
+    (void)fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+}
 
 #if defined(TABLE_BUILD)
 static const unsigned char a2e[256] __attribute__((aligned(8))) = {
@@ -149,7 +180,7 @@ void gen_conv_table(const char *name,
     if (0 == (i) % 8) {
       printf("/* %02x */ ", i);
     }
-    printf("0x%02x, ", converter(i));
+    printf("0x%02x, ", converter((unsigned char)i));
     if (0 == (i + 1) % 8) {
       printf("\n");
     }
@@ -286,8 +317,8 @@ int main() {
   }
   gen_conv_table("a2e", conv_a2e);
   gen_conv_table("e2a", conv_e2a);
-  gen_conv_table("a22e", conv_a2e);
-  gen_conv_table("e22a", conv_e2a);
+  gen_conv_table("a22e", conv_a22e);
+  gen_conv_table("e22a", conv_e22a);
   //  gen_conv_table("inv", conv_invalid);
 
   gen_print_table("print_ascii", conv_null);
@@ -301,6 +332,7 @@ int main() {
 #else // TABLE_BUILD
 #include "cat2.h"
 int help(int argc, char **argv) {
+  (void)argc;
   fprintf(stderr, "\n\
 Usage: %s [OPTION]... [FILE]...\n\
 Concatenate FILE(s) to standard output in human readable form.\n\
@@ -323,10 +355,12 @@ Examples:\n\
                           Convert standard input to standard output.\n\
 \n\
 ",
-          argv[0], argv[0], argv[0]);
-  return -1;
+           argv[0], argv[0], argv[0]);
+  return 0;
 }
+#if __MVS__
 static int orig_conv_state;
+#endif
 static int ebcdic_out;
 static int outfd = 1;
 static int iam_ebcdic;
@@ -344,25 +378,27 @@ static const unsigned char *tables[tabcount] = {print_ascii, print_ebcdic,
 
 #define slide_width 256
 
-void wrline(unsigned char *str, int len) {
+int wrline(unsigned char *str, size_t len) {
   unsigned char tr[slide_width];
+  if (len > slide_width)
+    len = slide_width;
   if (ebcdic_out) {
     if (iam_ebcdic) {
-      write(outfd, str, len);
+      return full_write(outfd, str, len);
     } else {
-      for (int i = 0; i < len; ++i) {
+      for (size_t i = 0; i < len; ++i) {
         tr[i] = a2e[str[i]];
       }
-      write(outfd, tr, len);
+      return full_write(outfd, tr, len);
     }
   } else {
     if (iam_ebcdic) {
-      for (int i = 0; i < len; ++i) {
+      for (size_t i = 0; i < len; ++i) {
         tr[i] = e2a[str[i]];
       }
-      write(outfd, tr, len);
+      return full_write(outfd, tr, len);
     } else {
-      write(outfd, str, len);
+      return full_write(outfd, str, len);
     }
   }
 }
@@ -376,6 +412,7 @@ struct slide_buf {
 };
 
 void init_buf(int fd, struct slide_buf *buf) {
+  (void)fd;
   memset(buf, 0, sizeof(struct slide_buf));
   unsigned char *begin = &(buf->_buffer[0]);
   for (int i = 0; i < tabcount; ++i) {
@@ -385,8 +422,7 @@ void init_buf(int fd, struct slide_buf *buf) {
 }
 
 void refill_buf(int fd, struct slide_buf *buf) {
-  char ch;
-  int rc;
+  ssize_t rc;
   int i, tab;
   if (buf->offset > 0) {
     if (buf->count > 0) {
@@ -413,26 +449,48 @@ void refill_buf(int fd, struct slide_buf *buf) {
       rc = read(fd, localbuf, sz);
     }
     if (rc > 0) {
-      if (rawfd != -1)
-        write(rawfd, localbuf, rc);
+      if (rawfd != -1) {
+        if (full_write(rawfd, localbuf, (size_t)rc) < 0) {
+          /* Log-save failure should not corrupt terminal output;
+           * report once and disable raw logging. */
+          int err = errno;
+          fprintf(stderr, "warning: write to log file failed: %s\n",
+                  strerror(err));
+          close(rawfd);
+          rawfd = -1;
+        }
+      }
       localbuf[rc] = 0;
     }
     if (rc == 0) {
       localbuf[0] = 0;
-      if (errno != EAGAIN)
-        buf->eof = 1;
+      /* read() returning 0 means EOF; errno is not meaningful here. */
+      buf->eof = 1;
     }
-    int sz_read = rc;
+    if (rc < 0) {
+      if (errno == EINTR || errno == EAGAIN
+#if EAGAIN != EWOULDBLOCK
+          || errno == EWOULDBLOCK
+#endif
+      ) {
+        return;
+      }
+      /* Hard read error: treat as EOF to avoid spinning, caller
+       * reports via write failures if any. */
+      buf->eof = 1;
+      return;
+    }
+    ssize_t sz_read = rc;
     if (sz_read > 0) {
       unsigned _cnt = buf->count;
       for (tab = 0; tab < tabcount; ++tab) {
         const unsigned char *table = tables[tab];
         unsigned char *output = buf->buffer[tab] + _cnt;
-        __convert_one_to_one(table, output, sz_read, localbuf);
+        __convert_one_to_one(table, output, (size_t)sz_read, localbuf);
         output[sz_read] = 0; // this last table doesn't map 0 to 0 so it must
                              // be terminated explicitly
       }
-      buf->count += sz_read;
+      buf->count += (unsigned)sz_read;
     }
   }
   return;
@@ -458,7 +516,7 @@ int strlen_n(const unsigned char *str) {
 unsigned find_longest_in_buf(struct slide_buf *buf, unsigned *len) {
   int tab;
   int index = 0;
-  unsigned max = 0;
+  int max = 0;
   static int last_index = -1;
 
   for (tab = 0; tab < tabcount; ++tab) {
@@ -466,41 +524,52 @@ unsigned find_longest_in_buf(struct slide_buf *buf, unsigned *len) {
     if (tmp > max) {
       max = tmp;
       index = tab;
-      if ((buf->buffer[tab])[tmp - 1] == '\n') {
+      if (tmp > 0 && (buf->buffer[tab])[tmp - 1] == '\n') {
         break;
       }
     } else if (tmp == max) {
       if (tab == last_index) {
         index = tab;
-        if ((buf->buffer[tab])[tmp - 1] == '\n') {
+        if (tmp > 0 && (buf->buffer[tab])[tmp - 1] == '\n') {
           break;
         }
       }
     }
   }
   last_index = index;
-  *len = max;
-  return index;
+  *len = (unsigned)max;
+  return (unsigned)index;
 }
 
 int dofile(int fd) {
   struct slide_buf buf;
+  int wrc = 0;
   unblock(fd);
   init_buf(fd, &buf);
   refill_buf(fd, &buf);
   unsigned len = 0;
   while (buf_has_data(&buf)) {
     unsigned candidate_index = find_longest_in_buf(&buf, &len);
-    wrline(buf.buffer[candidate_index], len);
-    buf.offset = len;
-    buf.count -= len;
+    if (len == 0) {
+      /* Defensive: no table produced output (should not happen with
+       * current tables). Consume one byte as '.' to avoid spinning. */
+      unsigned char dot = '.';
+      if (full_write(outfd, &dot, 1) < 0)
+        return 1;
+      buf.offset = 1;
+      buf.count -= 1;
+    } else {
+      if (wrline(buf.buffer[candidate_index], len) < 0)
+        wrc = 1;
+      buf.offset = len;
+      buf.count -= len;
+    }
     refill_buf(fd, &buf);
   }
-  return 0;
+  return wrc;
 }
 
 int main(int argc, char **argv) {
-  unsigned int i;
   int rc = 0;
   int doneone = 0;
 
@@ -540,7 +609,7 @@ int main(int argc, char **argv) {
   assert(!!!"platform not determined");
 #endif
   if (argc > 1) {
-    for (i = 1; i < argc; ++i) {
+    for (int i = 1; i < argc; ++i) {
       if (!strcmp("-e", argv[i])) {
         ebcdic_out = 1;
       } else if (!strcmp("-a", argv[i])) {
@@ -554,36 +623,50 @@ int main(int argc, char **argv) {
       } else if (!strcmp("-o", argv[i])) {
         if ((i + 1) < argc) {
           ++i;
-          rawfd = open(argv[i], O_WRONLY | O_CREAT | O_APPEND,
-                       S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-          if (-1 == rawfd) {
-            int err = errno;
-            fprintf(stderr, "errno %d on open %s : %s\n", err, argv[i],
-                    strerror(err));
-            return err;
+          if (rawfd != -1) {
+            fprintf(stderr, "only one -o log file supported, ignoring %s\n",
+                    argv[i]);
+          } else {
+            rawfd = open(argv[i], O_WRONLY | O_CREAT | O_APPEND,
+                         S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+            if (-1 == rawfd) {
+              int err = errno;
+              fprintf(stderr, "errno %d on open %s : %s\n", err, argv[i],
+                      strerror(err));
+              return 1;
+            }
           }
+        } else {
+          fprintf(stderr, "-o requires a log file argument\n");
+          return 2;
         }
       } else if (!strcmp("-", argv[i])) {
-        rc += dofile(0);
+        if (dofile(0) != 0)
+          rc = 1;
         doneone = 1;
       } else {
         int fd = open(argv[i], O_RDONLY);
         if (fd >= 0) {
           files = 1;
-          rc += dofile(fd);
+          if (dofile(fd) != 0)
+            rc = 1;
           doneone = 1;
           close(fd);
         } else {
           int err = errno;
           fprintf(stderr, "errno %d on open %s : %s\n", err, argv[i],
                   strerror(err));
-          return err;
+          return 1;
         }
       }
     }
   }
-  if (doneone == 0)
-    rc += dofile(0);
+  if (doneone == 0) {
+    if (dofile(0) != 0)
+      rc = 1;
+  }
+  if (rawfd != -1)
+    close(rawfd);
   return rc;
 }
 #endif // TABLE_BUILD

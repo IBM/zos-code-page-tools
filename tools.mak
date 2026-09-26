@@ -6,6 +6,8 @@
 
 BINS:=cat2 tagfile aeconv utf8-verify
 
+.PHONY: all install check clean
+
 all: $(BINS)
 
 ME:=$(firstword $(MAKEFILE_LIST))
@@ -45,6 +47,11 @@ else
 -D_XPLATFORM_SOURCE=1  \
 -D__static_assert=static_assert  \
 -D_POSIX_C_SOURCE=2 \
+-O2 \
+-Wall -Wextra -Wpedantic -Wformat=2 -Wformat-security \
+-Wnull-dereference -Wstack-protector \
+-fstack-protector-strong \
+-D_FORTIFY_SOURCE=2 \
 -fasm  \
 -fzos-le-char-mode=ascii  \
 -isystem/usr/include  \
@@ -55,8 +62,8 @@ endif
 LINK:=$(CLANG) -V -W ,CALL,REUS=RENT,MAP,XREF,LIST,LP64 -Wl,XPLINK
 
 install:
-	mkdir -p $(PREFIX)/bin
-	install $(BINS) $(PREFIX)/bin
+	mkdir -p $(DESTDIR)$(PREFIX)/bin
+	install -m 755 $(BINS) $(DESTDIR)$(PREFIX)/bin
 
 check:
 	@echo no check yet
@@ -76,5 +83,5 @@ vpath %.c $(SRC_DIR)/src/
 	$(LINK) -o $@ $<
 	
 clean:
-	-@ for f in $(BINS) *.u *.o ;do [ -r $$f ] && rm $$f  ; done; true
+	rm -f $(BINS) *.u *.o *.lst *.map *.dbg
 

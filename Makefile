@@ -2,5 +2,6 @@
 # bootstrap makefile
 builddir := objs
 
-.DEFAULT all: 
+.PHONY: all install check clean
+all install check clean:
 	mkdir -p $(builddir) && cd $(builddir) && $(MAKE) -f ../tools.mak $@
