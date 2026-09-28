@@ -46,6 +46,13 @@
 #include <string.h>
 #include <unistd.h>
 
+/* Version string: defaults to "dev" and is overridden at build time via
+ * -DZOSCPT_VERSION="..." (see tools.mak: ZOSCPT_VERSION, with git
+ * describe / dev-<timestamp> fallback). */
+#ifndef ZOSCPT_VERSION
+#define ZOSCPT_VERSION "dev"
+#endif
+
 static int byte0_next_state[256] = {
     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
@@ -314,7 +321,7 @@ NAME\n\
        utf8-verify - check and optionally convert multibyte code points to U'....' or u'....' notation\n\
 \n\
 SYNOPSIS\n\
-       utf8-verify -i [input file] -o [output file] [-u] [-v]\n\
+       utf8-verify -i [input file] -o [output file] [-u] [-v] [-V]\n\
 \n\
 DESCRIPTION\n\
        Verify FILE, writing converted output.\n\
@@ -327,13 +334,14 @@ DESCRIPTION\n\
             \\uxxxx (fixed-length, 4 hex digits) and \\Uxxxxxxxx (fixed-length, 8 hex digits)\n\
        -u,  convert to U+(xxxx | xxxxx | xxxxxx) form instead of the C notation\n\
        -v,  verbose\n\
+       -V,  display version and exit\n\
 \n\
 RETURN\n\
         0,  no error\n\
         1,  malformed utf-8 detected\n\
         2,  other errors (bad usage, I/O failure)\n\
 \n\
-utf8-verify version 1.0\n\
+utf8-verify version " ZOSCPT_VERSION "\n\
 \n");
   return 0;
 }
@@ -347,7 +355,7 @@ int main(int argc, char **argv) {
   int infd = 0;
   int error = 0;
   int u = 0;
-  while ((c = getopt(argc, argv, "i:o:huv")) != -1)
+  while ((c = getopt(argc, argv, "i:o:huVv")) != -1)
     switch (c) {
     case 'i':
       input_file = optarg;
@@ -363,6 +371,9 @@ int main(int argc, char **argv) {
     case 'v':
       verbose = 1;
       break;
+    case 'V':
+      printf("utf8-verify %s\n", ZOSCPT_VERSION);
+      return 0;
     default:
       fprintf(stderr, "unexpected option %c unknown. see -h\n", optopt);
       return 2;

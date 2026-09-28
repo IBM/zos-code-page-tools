@@ -33,6 +33,17 @@ Common CCSIDs used here:
 make
 ```
 
+The build embeds the version via `-DZOSCPT_VERSION="..."`, taken from
+`$ZOSCPT_VERSION` or else `git describe --tags --always --dirty`.
+A build without the define reports `dev`. Each tool prints it:
+
+```sh
+tagfile -v        # -V also works
+utf8-verify -V
+cat2 -V
+aeconv -V
+```
+
 Executables are placed in `objs/`:
 
 ```sh
@@ -89,7 +100,7 @@ Options:
 -r  recurse into subdirectories
 -u  tag UTF-8 files with 1208 instead of 819
 -h  display help (exit 0)
--v  display version (exit 0)
+-v, -V  display version (exit 0)
 ```
 
 Notes:
@@ -123,6 +134,7 @@ Options:
       \uxxxx (4 hex digits) and \Uxxxxxxxx (8 hex digits)
 -u  use U+xxxx / U+xxxxx / U+xxxxxx form instead of C \u / \U notation
 -v  verbose diagnostics on stderr
+-V  display version (exit 0)
 -h  display help (exit 0)
 ```
 
@@ -168,6 +180,7 @@ Useful when a log mixes both encodings.
 -a            force ASCII output
 -e            force EBCDIC output
 -2            write output to stderr (fd 2)
+-V            display version (exit 0)
 ```
 
 With no `FILE`, or when `FILE` is `-`, reads standard input.
@@ -194,6 +207,7 @@ Notes:
 ```sh
 aeconv -a2e [files ...]   # ASCII (819) -> EBCDIC (1047)
 aeconv -e2a [files ...]   # EBCDIC (1047) -> ASCII (819)
+aeconv -V                 # display version (exit 0)
 ```
 
 > WARNING: conversion is done in-place and is destructive — no temp file or
@@ -225,6 +239,11 @@ aeconv -e2a important.txt
 - `utf8-verify -o` truncates the output file. Same symlink caution as above.
 - All tools now build warning-free with `-Wall -Wextra -Wpedantic` and use
   `_FORTIFY_SOURCE=2` / stack protectors where supported.
+
+## Downstream
+
+Packaged port: [zopencommunity/zos-code-page-toolsport](https://github.com/zopencommunity/zos-code-page-toolsport) —
+tracks this repo's releases via a `ZOSCPT_VERSION` bump.
 
 ## License
 

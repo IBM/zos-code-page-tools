@@ -51,6 +51,13 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+/* Version string: defaults to "dev" and is overridden at build time via
+ * -DZOSCPT_VERSION="..." (see tools.mak: ZOSCPT_VERSION, with git
+ * describe / dev-<timestamp> fallback). */
+#ifndef ZOSCPT_VERSION
+#define ZOSCPT_VERSION "dev"
+#endif
 static inline void *__convert_one_to_one(const void *tbl, void *dst,
                                          size_t size, const void *src) {
   size_t i;
@@ -346,6 +353,7 @@ With no FILE, or when FILE is -, read standard input.\n\
   -a                       output in ASCII\n\
   -e                       output in EBCDIC\n\
   -2                       output in file descriptor 2 (stderr)\n\
+  -V, --version            display version and exit\n\
 \n\
 Examples:\n\
   %s -o rawdata.txt f - g\n\
@@ -616,6 +624,9 @@ int main(int argc, char **argv) {
         ebcdic_out = 0;
       } else if (!strcmp("-2", argv[i])) {
         outfd = 2;
+      } else if (!strcmp("-V", argv[i]) || !strcmp("--version", argv[i])) {
+        printf("cat2 %s\n", ZOSCPT_VERSION);
+        return 0;
       } else if (!strcmp("--help", argv[i])) {
         return help(argc, argv);
       } else if (!strcmp("-help", argv[i])) {

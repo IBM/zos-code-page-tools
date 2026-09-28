@@ -93,8 +93,13 @@ static int __ae_autoconvert_state(int state) {
 #include <unistd.h>
 
 #define PROG "tagfile"
-#define MAJOR_VERSION 1
-#define MINOR_VERSION 0
+
+/* Version string: defaults to "dev" and is overridden at build time via
+ * -DZOSCPT_VERSION="..." (see tools.mak: ZOSCPT_VERSION, with git
+ * describe / dev-<timestamp> fallback). */
+#ifndef ZOSCPT_VERSION
+#define ZOSCPT_VERSION "dev"
+#endif
 
 static const char ebcdic_valid[256] = {
     0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
@@ -513,8 +518,7 @@ static int expander(const char *dirpath, struct options *opts) {
 }
 
 void version(void) {
-  printf("%s v%d.%d (%s %s)\n", PROG, MAJOR_VERSION, MINOR_VERSION, __DATE__,
-         __TIME__);
+  printf("%s %s (%s %s)\n", PROG, ZOSCPT_VERSION, __DATE__, __TIME__);
 }
 
 void syntax(void) {
@@ -532,7 +536,7 @@ void syntax(void) {
          "\t-q: quiet operation\n"
          "\t-r: recurse subdirectories\n"
          "\t-u: tag UTF-8 files with codepage 1208 instead of 819\n"
-         "\t-v: display version information\n"
+         "\t-v, -V: display version information\n"
          "\n",
          PROG, PROG);
 }
@@ -543,7 +547,7 @@ int main(int argc, char **argv) {
   int c;
   opterr = 0;
   memset(&opts, 0, sizeof(opts));
-  while ((c = getopt(argc, argv, "bdquhrv")) != -1)
+  while ((c = getopt(argc, argv, "bdquhrvV")) != -1)
     switch (c) {
     case 'q':
       opts.qflag = 1;
@@ -564,6 +568,7 @@ int main(int argc, char **argv) {
       opts.uflag = 1;
       break;
     case 'v':
+    case 'V':
       opts.vflag = 1;
       break;
     case '?':

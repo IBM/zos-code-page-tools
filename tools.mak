@@ -11,6 +11,11 @@ BINS:=cat2 tagfile aeconv utf8-verify
 all: $(BINS)
 
 ME:=$(firstword $(MAKEFILE_LIST))
+
+VERSION ?= $(ZOSCPT_VERSION)
+ifeq ($(strip $(VERSION)),)
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev-$(shell date +%Y%m%d_%H%M%S))
+endif
 USER:=$(shell id -nu)
 GITDIR:=$(shell dirname $(ME))/.
 COMMIT:=zoscptools-$(shell echo $$(cd $(GITDIR) && git log -n 1 --no-color) | sed -e "s/^commit \([^ ]*\) .*/\1/" )
@@ -58,6 +63,9 @@ else
 -I../include \
 -m64
 endif
+
+# Version string for all targets; applies whether or not CFLAGSOVERRIDE is set.
+CF += -DZOSCPT_VERSION='"$(VERSION)"'
 
 LINK:=$(CLANG) -V -W ,CALL,REUS=RENT,MAP,XREF,LIST,LP64 -Wl,XPLINK
 

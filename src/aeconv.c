@@ -45,13 +45,21 @@
 #if __MVS__
 #include <_Nascii.h>
 #endif
+
+/* Version string: defaults to "dev" and is overridden at build time via
+ * -DZOSCPT_VERSION="..." (see tools.mak: ZOSCPT_VERSION, with git
+ * describe / dev-<timestamp> fallback). */
+#ifndef ZOSCPT_VERSION
+#define ZOSCPT_VERSION "dev"
+#endif
 void help(int argc, char** argv) {
   (void)argc;
   fprintf(stderr,
           "\n%s [option] files... \n\n"
           "     options\n"
-          "       -a2e    convert from ASCII (CCSID 819) to EBCDIC (CCSID 1047)\n"
-          "       -e2a    convert from EBCDIC (CCSID 1047) to ASCII (CCSID 819)\n"
+           "       -a2e    convert from ASCII (CCSID 819) to EBCDIC (CCSID 1047)\n"
+           "       -e2a    convert from EBCDIC (CCSID 1047) to ASCII (CCSID 819)\n"
+           "       -V      display version and exit\n"
           "\n"
           "     NOTE: conversion is done in-place and is destructive.\n"
           "           Back up files before converting.\n",
@@ -156,6 +164,10 @@ int main(int argc, char** argv) {
 #endif
   const unsigned char* table;
   struct stat st;
+  if (argc == 2 && 0 == strcmp(argv[1], "-V")) {
+    printf("aeconv %s\n", ZOSCPT_VERSION);
+    return 0;
+  }
   if (argc < 3) {
     help(argc, argv);
   }
