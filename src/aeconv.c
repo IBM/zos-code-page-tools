@@ -52,19 +52,43 @@
 #ifndef ZOSCPT_VERSION
 #define ZOSCPT_VERSION "dev"
 #endif
-void help(int argc, char** argv) {
+void usage(int argc, char** argv) {
   (void)argc;
   fprintf(stderr,
           "\n%s [option] files... \n\n"
           "     options\n"
-           "       -a2e    convert from ASCII (CCSID 819) to EBCDIC (CCSID 1047)\n"
-           "       -e2a    convert from EBCDIC (CCSID 1047) to ASCII (CCSID 819)\n"
-           "       -V      display version and exit\n"
+          "       -a2e    convert from ASCII (CCSID 819) to EBCDIC (CCSID 1047)\n"
+          "       -e2a    convert from EBCDIC (CCSID 1047) to ASCII (CCSID 819)\n"
+          "       -h, -help, --help\n"
+          "               display help and exit 0\n"
+          "       -V, --version\n"
+          "               display version and exit 0\n"
           "\n"
           "     NOTE: conversion is done in-place and is destructive.\n"
-          "           Back up files before converting.\n",
+          "           Back up files before converting.\n"
+          "           On z/OS the file tag is updated to the target CCSID;\n"
+          "           elsewhere re-run tagfile/ctag on z/OS after converting.\n",
           argv[0]);
   exit(2);
+}
+void help(int argc, char** argv) {
+  (void)argc;
+  printf(
+          "\n%s [option] files... \n\n"
+          "     options\n"
+          "       -a2e    convert from ASCII (CCSID 819) to EBCDIC (CCSID 1047)\n"
+          "       -e2a    convert from EBCDIC (CCSID 1047) to ASCII (CCSID 819)\n"
+          "       -h, -help, --help\n"
+          "               display help and exit 0\n"
+          "       -V, --version\n"
+          "               display version and exit 0\n"
+          "\n"
+          "     NOTE: conversion is done in-place and is destructive.\n"
+          "           Back up files before converting.\n"
+          "           On z/OS the file tag is updated to the target CCSID;\n"
+          "           elsewhere re-run tagfile/ctag on z/OS after converting.\n",
+          argv[0]);
+  exit(0);
 }
 static const unsigned char a2e[256] = {
     /* 00 */ 0x00, 0x01, 0x02, 0x03, 0x37, 0x2d, 0x2e, 0x2f,
@@ -163,20 +187,34 @@ int main(int argc, char** argv) {
   __ae_autoconvert_state(_CVTSTATE_OFF);
 #endif
   const unsigned char* table;
+  unsigned short target_ccsid = 0;
   struct stat st;
-  if (argc == 2 && 0 == strcmp(argv[1], "-V")) {
+  /* Explicit help/version requests exit 0 (stdout); bad usage exits 2. */
+  if (argc >= 2 &&
+      (0 == strcmp(argv[1], "-h") || 0 == strcmp(argv[1], "-help") ||
+       0 == strcmp(argv[1], "--help"))) {
+    help(argc, argv);
+  }
+  if (argc >= 2 &&
+      (0 == strcmp(argv[1], "-V") || 0 == strcmp(argv[1], "--version"))) {
     printf("aeconv %s\n", ZOSCPT_VERSION);
     return 0;
   }
   if (argc < 3) {
-    help(argc, argv);
+    usage(argc, argv);
   }
   if (0 == strcmp(argv[1], "-a2e")) {
     table = a2e;
+#if __MVS__
+    target_ccsid = 1047;
+#endif
   } else if (0 == strcmp(argv[1], "-e2a")) {
     table = e2a;
+#if __MVS__
+    target_ccsid = 819;
+#endif
   } else {
-    help(argc, argv);
+    usage(argc, argv);
   }
   char** files = argv + 2;
   int error = 0;
@@ -212,10 +250,12 @@ int main(int argc, char** argv) {
         } else {
           off_t off;
           int done = 0;
+          int file_error = 0;
           off = lseek(fd, 0, SEEK_SET);
           if (off == -1) {
             errormsg(*files, "seek failed", errno);
             ++error;
+            file_error = 1;
           } else {
             bytes = read(fd, buffer, sizeof(buffer));
             while (bytes > 0) {
@@ -226,17 +266,20 @@ int main(int argc, char** argv) {
               if (lseek(fd, off, SEEK_SET) == -1) {
                 errormsg(*files, "seek failed", errno);
                 ++error;
+                file_error = 1;
                 break;
               }
               if (full_write(fd, buffer, (size_t)bytes) == -1) {
                 errormsg(*files, "write failed", errno);
                 ++error;
+                file_error = 1;
                 break;
               }
               off = lseek(fd, 0, SEEK_CUR);
               if (off == -1) {
                 errormsg(*files, "seek failed", errno);
                 ++error;
+                file_error = 1;
                 break;
               }
               bytes = read(fd, buffer, sizeof(buffer));
@@ -246,11 +289,30 @@ int main(int argc, char** argv) {
             if (bytes < 0) {
               errormsg(*files, "read failed", errno);
               ++error;
+              file_error = 1;
             } else if (!done && bytes != 0) {
               /* bytes == 0 means clean EOF; nothing to do */
             }
           }
           close(fd);
+#if __MVS__
+          /* Keep the file tag in sync with the new content so a
+           * separate tagfile/ctag run is not required. */
+          if (!file_error) {
+            attrib_t attr;
+            memset(&attr, 0, sizeof(attr));
+            attr.att_filetagchg = 1;
+            attr.att_filetag.ft_ccsid = target_ccsid;
+            attr.att_filetag.ft_txtflag = 1;
+            if (__chattr(*files, &attr, sizeof(attr)) != 0) {
+              errormsg(*files, "chattr (retag) failed", errno);
+              ++error;
+            }
+          }
+#else
+          (void)file_error;
+          (void)target_ccsid;
+#endif
         }
       }
     }

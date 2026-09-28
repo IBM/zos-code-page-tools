@@ -316,12 +316,12 @@ int work(int fd, int outfd, const char *filename, int verbose, int u) {
 int help(int argc, char **argv) {
   (void)argc;
   (void)argv;
-  fprintf(stderr, "\n\
+  printf("\n\
 NAME\n\
        utf8-verify - check and optionally convert multibyte code points to U'....' or u'....' notation\n\
 \n\
 SYNOPSIS\n\
-       utf8-verify -i [input file] -o [output file] [-u] [-v] [-V]\n\
+       utf8-verify -i [input file] -o [output file] [-u] [-v] [-V] [-h]\n\
 \n\
 DESCRIPTION\n\
        Verify FILE, writing converted output.\n\
@@ -334,10 +334,11 @@ DESCRIPTION\n\
             \\uxxxx (fixed-length, 4 hex digits) and \\Uxxxxxxxx (fixed-length, 8 hex digits)\n\
        -u,  convert to U+(xxxx | xxxxx | xxxxxx) form instead of the C notation\n\
        -v,  verbose\n\
-       -V,  display version and exit\n\
+       -V, --version,  display version and exit 0\n\
+       -h, -help, --help,  display help and exit 0\n\
 \n\
 RETURN\n\
-        0,  no error\n\
+        0,  no error (help/version also exit 0)\n\
         1,  malformed utf-8 detected\n\
         2,  other errors (bad usage, I/O failure)\n\
 \n\
@@ -355,6 +356,15 @@ int main(int argc, char **argv) {
   int infd = 0;
   int error = 0;
   int u = 0;
+  /* Normalize long aliases so getopt() does not report
+   * "unexpected option - unknown" for --help/--version. */
+  for (int i = 1; i < argc; ++i) {
+    if (0 == strcmp(argv[i], "-help") || 0 == strcmp(argv[i], "--help")) {
+      argv[i] = (char *)"-h";
+    } else if (0 == strcmp(argv[i], "--version")) {
+      argv[i] = (char *)"-V";
+    }
+  }
   while ((c = getopt(argc, argv, "i:o:huVv")) != -1)
     switch (c) {
     case 'i':

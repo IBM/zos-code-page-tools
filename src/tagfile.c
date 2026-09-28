@@ -532,11 +532,16 @@ void syntax(void) {
          "\t-d: do not tag anything, just dry run, exit 0 if tagging is not "
          "necessary\n"
          "\t-b: do not tag binary files\n"
-         "\t-h: display syntax information\n"
+         "\t-h, -help, --help: display syntax information (exit 0)\n"
          "\t-q: quiet operation\n"
          "\t-r: recurse subdirectories\n"
          "\t-u: tag UTF-8 files with codepage 1208 instead of 819\n"
-         "\t-v, -V: display version information\n"
+         "\t-v, -V, --version: display version information (exit 0)\n"
+         "\n"
+         "EXIT STATUS\n"
+         "\t0: success (help/version also exit 0)\n"
+         "\t1: a file needed tagging/errored (or -d would tag)\n"
+         "\t2: bad usage (unknown option, no files)\n"
          "\n",
          PROG, PROG);
 }
@@ -545,8 +550,18 @@ int main(int argc, char **argv) {
   struct options opts;
   int index;
   int c;
+  int badopt = 0;
   opterr = 0;
   memset(&opts, 0, sizeof(opts));
+  /* Normalize long aliases so getopt() does not emit spurious
+   * "option e/- unknown" noise for -help/--help/--version. */
+  for (int i = 1; i < argc; ++i) {
+    if (0 == strcmp(argv[i], "-help") || 0 == strcmp(argv[i], "--help")) {
+      argv[i] = (char *)"-h";
+    } else if (0 == strcmp(argv[i], "--version")) {
+      argv[i] = (char *)"-V";
+    }
+  }
   while ((c = getopt(argc, argv, "bdquhrvV")) != -1)
     switch (c) {
     case 'q':
@@ -572,13 +587,17 @@ int main(int argc, char **argv) {
       opts.vflag = 1;
       break;
     case '?':
-      fprintf(stderr, "option %c unknown\n", optopt);
-      opts.hflag = 1;
+      fprintf(stderr, "option %c unknown, see -h\n", optopt);
+      badopt = 1;
       break;
     default:
-      fprintf(stderr, "unexpected option %c unknown\n", optopt);
-      opts.hflag = 1;
+      fprintf(stderr, "unexpected option %c unknown, see -h\n", optopt);
+      badopt = 1;
     }
+
+  if (badopt) {
+    return 2;
+  }
 
   if (opts.hflag) {
     syntax();

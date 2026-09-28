@@ -340,7 +340,7 @@ int main() {
 #include "cat2.h"
 int help(int argc, char **argv) {
   (void)argc;
-  fprintf(stderr, "\n\
+  printf("\n\
 Usage: %s [OPTION]... [FILE]...\n\
 Concatenate FILE(s) to standard output in human readable form.\n\
 \n\
@@ -348,19 +348,20 @@ With no FILE, or when FILE is -, read standard input.\n\
 \n\
 \n\
   -o [logfile]             save raw input to file [logfile]\n\
-  --help                   show this dialog\n\
-  -help                    show this dialog\n\
+  -h, -help, --help        show this dialog (exit 0)\n\
   -a                       output in ASCII\n\
   -e                       output in EBCDIC\n\
   -2                       output in file descriptor 2 (stderr)\n\
-  -V, --version            display version and exit\n\
+  -V, --version            display version and exit 0\n\
+\n\
+Exit status: 0 success, 1 I/O error, 2 bad usage.\n\
 \n\
 Examples:\n\
   %s -o rawdata.txt f - g\n\
-                          Convert f's contents, then standard input,\n\
-                          then g's contents to terminal, input data saved in rawdata.txt.\n\
+                           Convert f's contents, then standard input,\n\
+                           then g's contents to terminal, input data saved in rawdata.txt.\n\
   %s\n\
-                          Convert standard input to standard output.\n\
+                           Convert standard input to standard output.\n\
 \n\
 ",
            argv[0], argv[0], argv[0]);
@@ -617,21 +618,27 @@ int main(int argc, char **argv) {
   assert(!!!"platform not determined");
 #endif
   if (argc > 1) {
+    int end_of_options = 0;
     for (int i = 1; i < argc; ++i) {
-      if (!strcmp("-e", argv[i])) {
+      if (!end_of_options && !strcmp("--", argv[i])) {
+        end_of_options = 1;
+        continue;
+      }
+      if (!end_of_options && !strcmp("-e", argv[i])) {
         ebcdic_out = 1;
-      } else if (!strcmp("-a", argv[i])) {
+      } else if (!end_of_options && !strcmp("-a", argv[i])) {
         ebcdic_out = 0;
-      } else if (!strcmp("-2", argv[i])) {
+      } else if (!end_of_options && !strcmp("-2", argv[i])) {
         outfd = 2;
-      } else if (!strcmp("-V", argv[i]) || !strcmp("--version", argv[i])) {
+      } else if (!end_of_options &&
+                 (!strcmp("-V", argv[i]) || !strcmp("--version", argv[i]))) {
         printf("cat2 %s\n", ZOSCPT_VERSION);
         return 0;
-      } else if (!strcmp("--help", argv[i])) {
+      } else if (!end_of_options &&
+                 (!strcmp("--help", argv[i]) || !strcmp("-help", argv[i]) ||
+                  !strcmp("-h", argv[i]))) {
         return help(argc, argv);
-      } else if (!strcmp("-help", argv[i])) {
-        return help(argc, argv);
-      } else if (!strcmp("-o", argv[i])) {
+      } else if (!end_of_options && !strcmp("-o", argv[i])) {
         if ((i + 1) < argc) {
           ++i;
           if (rawfd != -1) {
@@ -651,10 +658,15 @@ int main(int argc, char **argv) {
           fprintf(stderr, "-o requires a log file argument\n");
           return 2;
         }
-      } else if (!strcmp("-", argv[i])) {
+      } else if (!end_of_options && !strcmp("-", argv[i])) {
         if (dofile(0) != 0)
           rc = 1;
         doneone = 1;
+      } else if (!end_of_options && argv[i][0] == '-' && argv[i][1] != '\0') {
+        fprintf(stderr, "unknown option %s, see --help\n", argv[i]);
+        if (rawfd != -1)
+          close(rawfd);
+        return 2;
       } else {
         int fd = open(argv[i], O_RDONLY);
         if (fd >= 0) {

@@ -99,8 +99,8 @@ Options:
 -q  quiet operation
 -r  recurse into subdirectories
 -u  tag UTF-8 files with 1208 instead of 819
--h  display help (exit 0)
--v, -V  display version (exit 0)
+-h, -help, --help  display help (exit 0)
+-v, -V, --version  display version (exit 0)
 ```
 
 Notes:
@@ -134,8 +134,8 @@ Options:
       \uxxxx (4 hex digits) and \Uxxxxxxxx (8 hex digits)
 -u  use U+xxxx / U+xxxxx / U+xxxxxx form instead of C \u / \U notation
 -v  verbose diagnostics on stderr
--V  display version (exit 0)
--h  display help (exit 0)
+-V, --version  display version (exit 0)
+-h, -help, --help  display help (exit 0)
 ```
 
 Validation follows RFC 3629:
@@ -176,11 +176,12 @@ Useful when a log mixes both encodings.
 
 ```text
 -o [logfile]  save raw input to [logfile] (appended, created 0644)
---help, -help show help (exit 0)
+-h, -help, --help  show help (exit 0)
 -a            force ASCII output
 -e            force EBCDIC output
 -2            write output to stderr (fd 2)
--V            display version (exit 0)
+-V, --version display version (exit 0)
+--            end of options (following args are files even if they start with -)
 ```
 
 With no `FILE`, or when `FILE` is `-`, reads standard input.
@@ -207,7 +208,8 @@ Notes:
 ```sh
 aeconv -a2e [files ...]   # ASCII (819) -> EBCDIC (1047)
 aeconv -e2a [files ...]   # EBCDIC (1047) -> ASCII (819)
-aeconv -V                 # display version (exit 0)
+aeconv -h | -help | --help  # display help (exit 0)
+aeconv -V | --version       # display version (exit 0)
 ```
 
 > WARNING: conversion is done in-place and is destructive — no temp file or
@@ -219,7 +221,13 @@ aeconv -V                 # display version (exit 0)
   stat/open TOCTOU races.
 - Short writes / `EINTR` are retried; any I/O error aborts that file and
   moves to the next.
-- Exit `0` if all files converted, `1` if any failed, `2` for bad usage.
+- On z/OS, each successfully converted file is retagged to the target CCSID
+  (`1047` for `-a2e`, `819` for `-e2a`, text) via `__chattr()`, so a separate
+  `tagfile` run is not required. Off z/OS tagging is a no-op; retag on z/OS
+  with `tagfile` (or `ctag`) after copying the file there if needed.
+- Exit `0` if all files converted, `1` if any failed, `2` for bad usage
+  (unknown option, missing direction, or no files). Explicit `-h`/`--help`
+  exits `0`.
 
 Example:
 
