@@ -298,27 +298,7 @@ static int dofile(const char *name, struct options *opts) {
   cp_state_t state;
   int cur_txtflag = 0;
   int cur_ccsid = 0;
-  if (stat(name, &st) != 0) {
-    if (!opts->qflag)
-      fprintf(stderr, "stat() error on %s: %s\n", name, strerror(errno));
-    opts->errcnt++;
-    return 1;
-  }
-  if (st.st_size == 0) {
-#if __MVS__
-    cur_txtflag = st.st_tag.ft_txtflag;
-    cur_ccsid = st.st_tag.ft_ccsid;
-#endif
-    if (!opts->qflag)
-      printf("file: %s is of size 0, tagged with t:%d ccsid:%d\n", name,
-             cur_txtflag, cur_ccsid);
-    opts->errcnt++;
-    return 1;
-  }
-#if __MVS__
-  cur_txtflag = st.st_tag.ft_txtflag;
-  cur_ccsid = st.st_tag.ft_ccsid;
-#endif
+  /* Skip initial stat() - we'll use fstat() after open() to avoid TOCTOU */
   memset(&state, 0, sizeof(state));
 
   if ((fd = open(name, O_RDONLY)) == -1) {
@@ -327,6 +307,33 @@ static int dofile(const char *name, struct options *opts) {
     opts->errcnt++;
     return 1;
   }
+  /* Re-stat through the open fd to reduce TOCTOU vs. the
+   * stat() above (symlink/file swap between stat and open). */
+  struct stat fst;
+  if (fstat(fd, &fst) == -1) {
+    if (!opts->qflag)
+      fprintf(stderr, "fstat() error on %s: %s\n", name, strerror(errno));
+    close(fd);
+    opts->errcnt++;
+    return 1;
+  }
+  if (fst.st_size == 0) {
+#if __MVS__
+    cur_txtflag = fst.st_tag.ft_txtflag;
+    cur_ccsid = fst.st_tag.ft_ccsid;
+#endif
+    if (!opts->qflag)
+      printf("file: %s is of size 0, tagged with t:%d ccsid:%d\n", name,
+             cur_txtflag, cur_ccsid);
+    close(fd);
+    opts->errcnt++;
+    return 1;
+  }
+#if __MVS__
+  /* Use the fstat() result to get accurate tag info */
+  cur_txtflag = fst.st_tag.ft_txtflag;
+  cur_ccsid = fst.st_tag.ft_ccsid;
+#endif
   /* Use read() instead of mmap(): portable, no page-alignment or
    * SIGBUS-on-truncated-file hazards, and no MAP_FAILED confusion. */
   for (;;) {
